@@ -16,8 +16,9 @@ configuration files, similar to Helm's --values flag behavior.
 Later files override earlier ones. The --set flag can override individual values.
 
 Files may declare an ``import:`` key with a list of paths (resolved relative
-to the importing file) that are loaded and merged as a base before the
-importing file's own content is applied on top.
+to the importing file, with a current-working-directory fallback) that are
+loaded and merged as a base before the importing file's own content is applied
+on top.
 """
 
 import copy
@@ -163,13 +164,38 @@ def _load_yaml_with_imports(
     # ancestors (the copy includes everything on the current call stack).
     base: dict[str, Any] = {}
     for imp in import_list:
-        imp_path = (path.parent / imp).resolve()
+        imp_path = _resolve_import_path(path, imp)
         logger.debug("Resolving import %s -> %s", imp, imp_path)
         imported = _load_yaml_with_imports(Path(imp_path), _visited.copy())
         base = deep_merge(base, imported)
 
     # The importing file's content wins over the base
     return deep_merge(base, content)
+
+
+def _resolve_import_path(path: Path, imp: str | Path) -> Path:
+    """Resolve an import path.
+
+    Prefer paths relative to the importing file. If that does not exist, fall
+    back to the current working directory or one of its parents so out-of-tree
+    provider configs can import validation-suite files using checkout-root-relative
+    paths even when commands run from a package subdirectory.
+    """
+    file_relative = (path.parent / imp).resolve()
+    if file_relative.exists():
+        return file_relative
+
+    expanded = Path(imp).expanduser()
+    if expanded.is_absolute():
+        return expanded.resolve()
+
+    cwd = Path.cwd().resolve()
+    for root in (cwd, *cwd.parents):
+        candidate = root / expanded
+        if candidate.exists():
+            return candidate.resolve()
+
+    return (cwd / expanded).resolve()
 
 
 def merge_yaml_files(
@@ -180,7 +206,8 @@ def merge_yaml_files(
 
     Files are merged in order - later files override earlier ones.
     Each file may contain an ``import:`` key listing other YAML files
-    to load as a base (paths resolved relative to the importing file).
+    to load as a base. Imports are resolved relative to the importing file,
+    with a fallback to the current working directory.
     --set values are applied after all files are merged.
 
     Args:

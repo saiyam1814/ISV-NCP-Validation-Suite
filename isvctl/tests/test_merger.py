@@ -229,6 +229,30 @@ class TestImportDirective:
         result = merge_yaml_files([str(child)])
         assert result == {"val": "overridden"}
 
+    def test_import_falls_back_to_current_working_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Checkout-root-relative imports work for out-of-tree provider configs."""
+        repo_root = tmp_path / "repo"
+        template = repo_root / "isvctl" / "configs" / "suites" / "vm.yaml"
+        template.parent.mkdir(parents=True)
+        template.write_text("tests:\n  cluster_name: template\n", encoding="utf-8")
+
+        provider_dir = tmp_path / "provider" / "config"
+        provider_dir.mkdir(parents=True)
+        provider = provider_dir / "vm.yaml"
+        provider.write_text(
+            "import:\n  - isvctl/configs/suites/vm.yaml\ntests:\n  cluster_name: provider\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(repo_root)
+
+        result = merge_yaml_files([str(provider)])
+        assert result == {"tests": {"cluster_name": "provider"}}
+
     def test_multiple_imports(self, tmp_path: Path) -> None:
         """Multiple imports are merged in order, child wins."""
         (tmp_path / "a.yaml").write_text("x: 1\ny: from_a")
